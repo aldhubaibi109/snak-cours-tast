@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Two-Lane Racing</title>
+<style>
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: white;
+  }
+  h1 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #e94560;
+  }
+  canvas {
+    background-color: #2b2b2b;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    border: 5px solid #16213e;
+    border-radius: 10px;
+    touch-action: none; /* Prevent scroll on touch */
+  }
+  #ui {
+    margin-top: 20px;
+    text-align: center;
+    height: 80px; /* fixed height so button doesn't jump UI */
+  }
+  button {
+    padding: 12px 25px;
+    font-size: 1.2em;
+    cursor: pointer;
+    background-color: #0f3460;
+    color: white;
+    border: 2px solid #e94560;
+    border-radius: 8px;
+    font-weight: bold;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+  button:hover { 
+    background-color: #e94560; 
+    color: #1a1a2e;
+    transform: scale(1.05);
+  }
+  .instructions {
+    margin-top: 15px;
+    color: #888;
+    font-size: 0.95em;
+  }
+</style>
+</head>
+<body>
+
+<h1>2-Lane Racing</h1>
+<canvas id="gameCanvas" width="320" height="600"></canvas>
+<div id="ui">
+  <button id="restartBtn" style="display: none;" onclick="resetGame()">Restart Game</button>
+  <div class="instructions" id="inst">Use <b>LEFT / RIGHT arrows</b> (or A/D) to switch lanes.<br>Tap screen sides on mobile.</div>
+</div>
+
+<script>
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+  const restartBtn = document.getElementById("restartBtn");
+  const inst = document.getElementById("inst");
+
+  // Game configuration
+  const laneWidth = canvas.width / 2;
+  const carWidth = 50;
+  const carHeight = 90;
+  
+  // Game state
+  let score = 0;
+  let gameSpeed = 5;
+  let isGameOver = false;
+  let frameCount = 0;
+  let animationId;
+
+  // Entities
+  let player = {
+    lane: 0, // 0 is left, 1 is right
+    y: canvas.height - carHeight - 30,
+    color: "#0f3460", // Blue player
+    highlight: "#4fa8ff"
+  };
+  
+  let obstacles = [];
+  let lines = []; // Road lines for moving effect
+
+  // Controls
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') player.lane = 0;
+    else if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') player.lane = 1;
+  });
+
+  // Touch / Click controls
+  function handleTouch(e) {
+    if (isGameOver) return; // let restart button work
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const x = clientX - rect.left;
+    if (x < canvas.width / 2) player.lane = 0;
+    else player.lane = 1;
+  }
+  canvas.addEventListener('mousedown', handleTouch);
+  canvas.addEventListener('touchstart', handleTouch, {passive: false});
+
+  function initLines() {
+    lines = [];
+    for (let i = -100; i < canvas.height; i += 80) {
+      lines.push(i);
+    }
+  }
+
+  function spawnObstacle() {
+    const lane = Math.random() < 0.5 ? 0 : 1;
+    obstacles.push({
+      lane: lane,
+      y: -carHeight,
+      color: "#e94560", // Red enemy
+      highlight: "#ff8297"
+    });
+  }
+
+  function drawCar(lane, y, color, highlight) {
+    const x = lane * laneWidth + (laneWidth - carWidth) / 2;
+    
+    // Shadow
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(x + 5, y + 5, carWidth, carHeight);
+
+    // Tires
+    ctx.fillStyle = "#111";
+    ctx.fillRect(x - 4, y + 15, 6, 20);
+    ctx.fillRect(x + carWidth - 2, y + 15, 6, 20);
+    ctx.fillRect(x - 4, y + carHeight - 35, 6, 20);
+    ctx.fillRect(x + carWidth - 2, y + carHeight - 35, 6, 20);
+
+    // Car Body
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(x, y, carWidth, carHeight, 10);
+    ctx.fill();
+
+    // Car Roof / Window
+    ctx.fillStyle = "#1a1a1a";
+    ctx.beginPath();
+    ctx.roundRect(x + 10, y + 25, carWidth - 20, carHeight - 50, 5);
+    ctx.fill();
+    
+    // Windshield highlight
+    ctx.fillStyle = highlight;
+    ctx.fillRect(x + 15, y + 30, carWidth - 30, 8);
+    
+    // Headlights
+    ctx.fillStyle = "#ffffcc";
+    ctx.beginPath();
+    ctx.arc(x + 12, y + 10, 4, 0, Math.PI * 2);
+    ctx.arc(x + carWidth - 12, y + 10, 4, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Taillights
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(x + 8, y + carHeight - 6, 12, 4);
+    ctx.fillRect(x + carWidth - 20, y + carHeight - 6, 12, 4);
+  }
+
+  function update() {
+    if (isGameOver) return;
+
+    frameCount++;
+    
+    // Move center road lines
+    for (let i = 0; i < lines.length; i++) {
+      lines[i] += gameSpeed;
+      if (lines[i] > canvas.height) {
+        lines[i] = -80; // move back to top
+      }
+    }
+
+    // Spawn obstacles dynamically based on speed
+    // Higher speed = spawn faster
+    let spawnRate = Math.max(25, 80 - (gameSpeed - 5) * 6); 
+    if (frameCount % Math.floor(spawnRate) === 0) {
+      spawnObstacle();
+    }
+
+    // Move obstacles and check collisions
+    for (let i = obstacles.length - 1; i >= 0; i--) {
+      obstacles[i].y += gameSpeed * 0.9; // Enemies go slightly slower than road for realism
+
+      // Collision detection logic
+      if (obstacles[i].lane === player.lane) {
+        // Simple bounding box collision with small grace area
+        const grace = 5;
+        if (
+          obstacles[i].y + carHeight - grace > player.y &&
+          obstacles[i].y + grace < player.y + carHeight
+        ) {
+          gameOver();
+        }
+      }
+
+      // Remove off-screen obstacles, add score
+      if (obstacles[i].y > canvas.height) {
+        obstacles.splice(i, 1);
+        score++;
+        
+        // Increase speed gradually
+        if (score % 3 === 0) {
+          gameSpeed += 0.4;
+        }
+      }
+    }
+  }
+
+  function draw() {
+    // Asphalt background
+    ctx.fillStyle = "#2b2b2b";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw center dashed line
+    ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillRect(canvas.width / 2 - 3, lines[i], 6, 40);
+    }
+    
+    // Draw road borders
+    ctx.fillStyle = "#e94560";
+    ctx.fillRect(0, 0, 5, canvas.height);
+    ctx.fillRect(canvas.width - 5, 0, 5, canvas.height);
+
+    // Draw obstacles
+    for (let obs of obstacles) {
+      drawCar(obs.lane, obs.y, obs.color, obs.highlight);
+    }
+
+    // Draw player
+    drawCar(player.lane, player.y, player.color, player.highlight);
+
+    // Draw UI HUD
+    ctx.fillStyle = "white";
+    ctx.font = "bold 22px 'Segoe UI'";
+    ctx.textAlign = "left";
+    ctx.fillText(`SCORE: ${score}`, 15, 30);
+    
+    // Draw Speedometer
+    ctx.font = "bold 16px 'Segoe UI'";
+    ctx.textAlign = "right";
+    const speedDisplay = Math.floor((gameSpeed - 5) * 10 + 60);
+    ctx.fillText(`${speedDisplay} MPH`, canvas.width - 15, 28);
+
+    if (isGameOver) {
+      // Dark overlay
+      ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Game Over Text
+      ctx.fillStyle = "#e94560";
+      ctx.textAlign = "center";
+      ctx.font = "bold 42px 'Segoe UI'";
+      ctx.fillText("CRASHED!", canvas.width / 2, canvas.height / 2 - 30);
+      
+      ctx.fillStyle = "white";
+      ctx.font = "24px 'Segoe UI'";
+      ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
+      
+      ctx.textAlign = "left"; // reset
+    }
+  }
+
+  function gameLoop() {
+    update();
+    draw();
+    if (!isGameOver) {
+      animationId = requestAnimationFrame(gameLoop);
+    }
+  }
+
+  function gameOver() {
+    isGameOver = true;
+    restartBtn.style.display = "inline-block";
+    inst.style.display = "none";
+  }
+
+  function resetGame() {
+    score = 0;
+    gameSpeed = 5;
+    isGameOver = false;
+    frameCount = 0;
+    obstacles = [];
+    player.lane = 0;
+    initLines();
+    
+    restartBtn.style.display = "none";
+    inst.style.display = "block";
+    
+    cancelAnimationFrame(animationId);
+    gameLoop();
+  }
+
+  // Start game on load
+  initLines();
+  gameLoop();
+
+</script>
+</body>
+</html>
